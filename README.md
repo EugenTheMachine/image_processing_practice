@@ -35,16 +35,54 @@ Implemented functionality (high level):
 
 ## Lab 2
 
-TBD
+**Curriculum topic:** Topic 3 - Wavelets and multi-scale analysis (+ STFT bridge).  
+**What you get:** Haar wavelet tools for 1D/2D signals, multi-level denoising by coefficient thresholding, and STFT/spectrogram utilities for 1D time-frequency analysis.
+
+Implementation module:
+- `labs/lab02_wavelets_stft.py`
+
+Implemented functionality (high level):
+- 1D Haar transform and inverse: `haar_dwt1`, `haar_idwt1` (with documented odd-length padding behavior)
+- 2D separable Haar transform and inverse: `haar_dwt2`, `haar_idwt2` with LL/LH/HL/HH bands
+- Wavelet coefficient thresholding: `wavelet_threshold` (hard/soft, arrays and nested tuples/lists)
+- Multi-level denoising: `wavelet_denoise` (deterministic and shape-preserving)
+- STFT bridge utilities: `stft1` and `spectrogram_magnitude`
 
 ## Lab 3
 
-TBD
+**Curriculum topic:** Topic 3 - Geometric transformations + feature detection/matching.  
+**What you get:** affine/perspective warps, ORB keypoint detection, descriptor matching, and RANSAC homography estimation.
+
+Implementation module:
+- `labs/lab03_geometry_features_matching.py`
+
+Implemented functionality (high level):
+- Geometric warping: `warp_affine`, `warp_perspective`
+- ORB feature extraction: `detect_orb`
+- Descriptor matching with ratio test: `match_descriptors`
+- Homography estimation with RANSAC: `estimate_homography_from_matches`
 
 ## Lab 4
 
-TBD
+**Curriculum topic:** Topic 4 - Markov Random Fields for image restoration.  
+**What you get:** pairwise MRF denoising with data + smoothness energy, supporting quadratic and Huber penalties.
+
+Implementation module:
+- `labs/lab04_mrf_restoration.py`
+
+Implemented functionality (high level):
+- MRF energy computation: `mrf_energy`
+- Iterative MRF denoising (gradient descent): `mrf_denoise`
+- Smoothness penalties: quadratic and Huber
 
 ## Lab 5
 
-TBD
+**Curriculum topic:** Topic 7 - Motion estimation.  
+**What you get:** dense optical flow with Farneback and HSV/BGR flow visualization.
+
+Implementation module:
+- `labs/lab05_motion_estimation.py`
+
+Implemented functionality (high level):
+- Dense optical flow estimation (Farneback): `optical_flow_farneback`
+- Flow visualization in BGR via HSV mapping: `flow_to_hsv`
