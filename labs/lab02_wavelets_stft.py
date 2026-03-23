@@ -1,6 +1,9 @@
-from __future__ import annotations
+"""
+Lab 02: Wavelets and STFT.
+by Yevhen Ponomarov, CS-S125
+"""
 
-"""Lab 02 (skeleton): Wavelets (Haar) + STFT bridge."""
+from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -9,6 +12,11 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 import numpy.typing as npt
+from scipy import signal
+
+import matplotlib
+import matplotlib.pyplot as plt
+matplotlib.use("Agg")
 
 ThresholdMode = Literal["soft", "hard"]
 
@@ -25,7 +33,17 @@ def haar_dwt1(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         (approx, detail): each length ~N/2.
     """
-    raise NotImplementedError("haar_dwt1 is not implemented")
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 1:
+        raise ValueError("Input x must be 1D.")
+
+    if x.size % 2 != 0:
+        x = np.pad(x, (0, 1), mode="edge")
+
+    evens = x[0::2]
+    odds = x[1::2]
+    # orthonormal Haar
+    return (evens + odds) / np.sqrt(2), (evens - odds) / np.sqrt(2)
 
 
 def haar_idwt1(approx: np.ndarray, detail: np.ndarray) -> np.ndarray:
@@ -39,7 +57,16 @@ def haar_idwt1(approx: np.ndarray, detail: np.ndarray) -> np.ndarray:
     Returns:
         Reconstructed signal.
     """
-    raise NotImplementedError("haar_idwt1 is not implemented")
+    approx = np.asarray(approx, dtype=np.float32)
+    detail = np.asarray(detail, dtype=np.float32)
+
+    if approx.shape != detail.shape:
+        raise ValueError("Approx and detail must have same shape")
+
+    out = np.empty(approx.size * 2, dtype=approx.dtype)
+    out[0::2] = (approx + detail) / np.sqrt(2)
+    out[1::2] = (approx - detail) / np.sqrt(2)
+    return out
 
 
 def haar_dwt2(image: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -52,7 +79,26 @@ def haar_dwt2(image: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarr
     Returns:
         LL, (LH, HL, HH).
     """
-    raise NotImplementedError("haar_dwt2 is not implemented")
+    img = np.asarray(image, dtype=np.float32)
+    h, w = img.shape
+
+    # row transform
+    if w % 2 != 0:
+        img = np.pad(img, ((0, 0), (0, 1)), mode="edge")
+    row_l = (img[:, 0::2] + img[:, 1::2]) / np.sqrt(2)
+    row_h = (img[:, 0::2] - img[:, 1::2]) / np.sqrt(2)
+
+    # col transform
+    if h % 2 != 0:
+        row_l = np.pad(row_l, ((0, 1), (0, 0)), mode="edge")
+        row_h = np.pad(row_h, ((0, 1), (0, 0)), mode="edge")
+
+    ll = (row_l[0::2, :] + row_l[1::2, :]) / np.sqrt(2)
+    lh = (row_l[0::2, :] - row_l[1::2, :]) / np.sqrt(2)
+    hl = (row_h[0::2, :] + row_h[1::2, :]) / np.sqrt(2)
+    hh = (row_h[0::2, :] - row_h[1::2, :]) / np.sqrt(2)
+
+    return ll, (lh, hl, hh)
 
 
 def haar_idwt2(LL: np.ndarray, bands: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
@@ -66,7 +112,22 @@ def haar_idwt2(LL: np.ndarray, bands: tuple[np.ndarray, np.ndarray, np.ndarray])
     Returns:
         Reconstructed image (crop policy for odd sizes should be documented).
     """
-    raise NotImplementedError("haar_idwt2 is not implemented")
+    lh, hl, hh = bands
+
+    # inverse cols
+    row_l = np.empty((LL.shape[0] * 2, LL.shape[1]), dtype=LL.dtype)
+    row_l[0::2, :] = (LL + lh) / np.sqrt(2)
+    row_l[1::2, :] = (LL - lh) / np.sqrt(2)
+
+    row_h = np.empty((hl.shape[0] * 2, hl.shape[1]), dtype=hl.dtype)
+    row_h[0::2, :] = (hl + hh) / np.sqrt(2)
+    row_h[1::2, :] = (hl - hh) / np.sqrt(2)
+
+    # inverse rows
+    out = np.empty((row_l.shape[0], row_l.shape[1] * 2), dtype=row_l.dtype)
+    out[:, 0::2] = (row_l + row_h) / np.sqrt(2)
+    out[:, 1::2] = (row_l - row_h) / np.sqrt(2)
+    return out
 
 
 def wavelet_threshold(coeffs: Any, threshold: float, mode: ThresholdMode = "soft") -> Any:
@@ -81,10 +142,20 @@ def wavelet_threshold(coeffs: Any, threshold: float, mode: ThresholdMode = "soft
     Returns:
         Thresholded coefficients with same structure.
     """
-    raise NotImplementedError("wavelet_threshold is not implemented")
+    if isinstance(coeffs, (list, tuple)):
+        return type(coeffs)(wavelet_threshold(c, threshold, mode) for c in coeffs)
+
+    arr = np.asarray(coeffs)
+    if mode == "hard":
+        return np.where(np.abs(arr) > threshold, arr, 0.0)
+    elif mode == "soft":
+        return np.sign(arr) * np.maximum(np.abs(arr) - threshold, 0.0)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
 
-def wavelet_denoise(image: np.ndarray, levels: int, threshold: float, mode: ThresholdMode = "soft") -> np.ndarray:
+def wavelet_denoise(image: np.ndarray, levels: int,
+                    threshold: float, mode: ThresholdMode = "soft") -> np.ndarray:
     """
     Denoise image via multi-level Haar thresholding.
 
@@ -97,7 +168,27 @@ def wavelet_denoise(image: np.ndarray, levels: int, threshold: float, mode: Thre
     Returns:
         Denoised image with deterministic behavior.
     """
-    raise NotImplementedError("wavelet_denoise is not implemented")
+    image = np.asarray(image, dtype=np.float32)
+    shapes = []
+    coeffs_list = []
+    curr = image
+
+    # forward
+    for _ in range(levels):
+        shapes.append(curr.shape)
+        curr, bands = haar_dwt2(curr)
+        coeffs_list.append(bands)
+
+    # threshold
+    coeffs_thresh = wavelet_threshold(coeffs_list, threshold, mode)
+
+    # backward
+    for i in reversed(range(levels)):
+        curr = haar_idwt2(curr, coeffs_thresh[i])
+        h, w = shapes[i]
+        curr = curr[:h, :w]
+
+    return curr
 
 
 def stft1(
@@ -113,7 +204,9 @@ def stft1(
     Returns:
         `(freqs_hz, times_s, Zxx)` where `Zxx` is complex.
     """
-    raise NotImplementedError("stft1 is not implemented")
+    noverlap = frame_len - hop_len
+    f, t, Zxx = signal.stft(x, fs=fs_hz, window=window, nperseg=frame_len, noverlap=noverlap)
+    return f, t, Zxx
 
 
 def spectrogram_magnitude(Zxx: np.ndarray, log_scale: bool = True) -> np.ndarray:
@@ -127,12 +220,20 @@ def spectrogram_magnitude(Zxx: np.ndarray, log_scale: bool = True) -> np.ndarray
     Returns:
         Non-negative finite magnitude matrix.
     """
-    raise NotImplementedError("spectrogram_magnitude is not implemented")
+    mag = np.abs(Zxx)
+    if log_scale:
+        mag = np.log(1.0 + mag)
+    return mag
 
 
 def normalize_to_uint8(x: npt.ArrayLike) -> npt.NDArray[np.uint8]:
     """Min-max normalize an array to `[0,255]` for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = np.asarray(x, dtype=np.float32)
+    mn, mx = np.min(arr), np.max(arr)
+    if mx <= mn:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    ret = (arr - mn) * (255.0 / (mx - mn))
+    return np.clip(ret, 0.0, 255.0).astype(np.uint8)
 
 
 def main() -> int:
@@ -147,13 +248,10 @@ def main() -> int:
     """
     parser = argparse.ArgumentParser(description="Lab 02 skeleton (implement functions first).")
     parser.add_argument("--img", type=str, default="lenna.png", help="Image from ./imgs/")
-    parser.add_argument("--out", type=str, default="out/lab02", help="Output directory (relative to repo root)")
+    parser.add_argument("--out", type=str, default="out/lab02",
+                        help="Output directory (relative to repo root)")
     args = parser.parse_args()
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
 
     def save_figure(path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,13 +264,14 @@ def main() -> int:
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    img = cv2.imread(str(imgs_dir / args.img), cv2.IMREAD_GRAYSCALE)
+    # img = cv2.imread(str(imgs_dir / args.img), cv2.IMREAD_GRAYSCALE)
+    img = cv2.imdecode(np.fromfile(imgs_dir / args.img, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise FileNotFoundError(str(imgs_dir / args.img))
 
     missing: list[str] = []
 
-    # --- Wavelet demo ---
+    # wavelet demo
     try:
         rng = np.random.default_rng(0)
         noisy = img.astype(np.float32) + rng.normal(0.0, 20.0, size=img.shape).astype(np.float32)
@@ -214,7 +313,7 @@ def main() -> int:
     except NotImplementedError as exc:
         missing.append(str(exc))
 
-    # --- STFT bridge demo ---
+    # STFT bridge demo
     try:
         fs = 400.0
         duration_s = 2.0
