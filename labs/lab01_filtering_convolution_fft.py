@@ -445,11 +445,13 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     imgs_dir = repo_root / "imgs"
+    
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    img1 = cv2.imread(str(imgs_dir / args.img1), cv2.IMREAD_GRAYSCALE)
-    img2 = cv2.imread(str(imgs_dir / args.img2), cv2.IMREAD_GRAYSCALE)
+    # Use cv2.imdecode() for proper handling of non-ASCII (Cyrillic) paths on Windows
+    img1 = cv2.imdecode(np.fromfile(imgs_dir / args.img1, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    img2 = cv2.imdecode(np.fromfile(imgs_dir / args.img2, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if img1 is None:
         raise FileNotFoundError(str(imgs_dir / args.img1))
     if img2 is None:
