@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 import cv2
+from PIL import Image
 import numpy as np
 
 
@@ -22,7 +23,22 @@ def warp_affine(image: np.ndarray, M: np.ndarray, out_shape: tuple[int, int], bo
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_affine is not implemented")
+    border_modes = {
+        "reflect": cv2.BORDER_REFLECT,
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE,
+    }
+    if border not in border_modes:
+        raise ValueError(f"Unsupported border mode: {border}")
+
+    out_h, out_w = out_shape
+    return cv2.warpAffine(
+        image,
+        M,
+        (out_w, out_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=border_modes[border],
+    )
 
 
 def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int], border: str = "reflect") -> np.ndarray:
@@ -38,7 +54,22 @@ def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_perspective is not implemented")
+    border_modes = {
+        "reflect": cv2.BORDER_REFLECT,
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE,
+    }
+    if border not in border_modes:
+        raise ValueError(f"Unsupported border mode: {border}")
+
+    out_h, out_w = out_shape
+    return cv2.warpPerspective(
+        image,
+        H,
+        (out_w, out_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=border_modes[border],
+    )
 
 
 def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPoint], np.ndarray | None]:
@@ -52,7 +83,17 @@ def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPo
     Returns:
         `(keypoints, descriptors)`, where descriptors may be `None`.
     """
-    raise NotImplementedError("detect_orb is not implemented")
+    if image.ndim == 3:
+        if image.shape[2] == 4:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
+        else:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+
+    orb = cv2.ORB_create(n_features)
+    keypoints, descriptors = orb.detectAndCompute(gray, None)
+    return keypoints, descriptors
 
 
 def match_descriptors(
@@ -73,7 +114,27 @@ def match_descriptors(
     Returns:
         Good matches sorted by distance.
     """
-    raise NotImplementedError("match_descriptors is not implemented")
+    if desc1 is None or desc2 is None:
+        return []
+
+    if method != "bf_hamming":
+        raise ValueError(f"Unsupported matching method: {method}")
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    if len(desc1) == 0 or len(desc2) == 0:
+        return []
+
+    knn_matches = matcher.knnMatch(desc1, desc2, k=2)
+    good_matches: list[cv2.DMatch] = []
+    for pair in knn_matches:
+        if len(pair) < 2:
+            continue
+        m, n = pair
+        if m.distance < ratio_test * n.distance:
+            good_matches.append(m)
+
+    good_matches.sort(key=lambda match: match.distance)
+    return good_matches
 
 
 def estimate_homography_from_matches(
@@ -94,7 +155,17 @@ def estimate_homography_from_matches(
     Returns:
         `(H, inlier_mask)` or `(None, None)`.
     """
-    raise NotImplementedError("estimate_homography_from_matches is not implemented")
+    if len(matches) < 4:
+        return None, None
+
+    pts1 = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+    pts2 = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+
+    H, mask = cv2.findHomography(pts1, pts2, cv2.RANSAC, ransac_thresh)
+    if H is None or mask is None:
+        return None, None
+
+    return H, mask.reshape(-1)
 
 
 def main() -> int:
@@ -128,9 +199,15 @@ def main() -> int:
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    img_bgr = cv2.imread(str(imgs_dir / args.img), cv2.IMREAD_COLOR)
+    img_path = imgs_dir / args.img
+    try:
+        file_bytes = np.fromfile(str(img_path), dtype=np.uint8)
+        img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    except Exception:
+        img_bgr = None
+
     if img_bgr is None:
-        raise FileNotFoundError(str(imgs_dir / args.img))
+        raise FileNotFoundError(str(img_path))
 
     h, w = img_bgr.shape[:2]
     missing: list[str] = []
@@ -142,13 +219,13 @@ def main() -> int:
         m[0, 2] += 18.0
         m[1, 2] += 10.0
         aff = warp_affine(img_bgr, m, out_shape=(h, w), border="reflect")
-        cv2.imwrite(str(out_dir / "affine_warp.png"), aff)
+        Image.fromarray(cv2.cvtColor(aff, cv2.COLOR_BGR2RGB)).save(out_dir / "affine_warp.png")
 
         src = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
         dst = np.float32([[12, 18], [w - 30, 8], [w - 18, h - 24], [20, h - 10]])
         hmat = cv2.getPerspectiveTransform(src, dst)
         per = warp_perspective(img_bgr, hmat, out_shape=(h, w), border="reflect")
-        cv2.imwrite(str(out_dir / "perspective_warp.png"), per)
+        Image.fromarray(cv2.cvtColor(per, cv2.COLOR_BGR2RGB)).save(out_dir / "perspective_warp.png")
     except NotImplementedError as exc:
         missing.append(str(exc))
 
