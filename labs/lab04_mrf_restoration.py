@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Literal
 
-import cv2
+from PIL import Image
 import numpy as np
 
 PenaltyType = Literal["quadratic", "huber"]
@@ -35,7 +35,28 @@ def mrf_energy(
     Returns:
         Scalar energy.
     """
-    raise NotImplementedError("mrf_energy is not implemented")
+    diff = x - y
+    data_term = float(np.sum(diff * diff))
+
+    smooth = 0.0
+    dx = x[:, :-1] - x[:, 1:]
+    if penalty == "quadratic":
+        smooth += float(np.sum(dx * dx))
+    else:
+        adx = np.abs(dx)
+        mask = adx <= huber_delta
+        smooth += float(np.sum((dx * dx) * mask + (2 * huber_delta * (adx - 0.5 * huber_delta)) * (~mask)))
+
+    dy = x[:-1, :] - x[1:, :]
+    if penalty == "quadratic":
+        smooth += float(np.sum(dy * dy))
+    else:
+        ady = np.abs(dy)
+        maskv = ady <= huber_delta
+        smooth += float(np.sum((dy * dy) * maskv + (2 * huber_delta * (ady - 0.5 * huber_delta)) * (~maskv)))
+
+    smoothness_term = lambda_smooth * smooth
+    return data_term + smoothness_term
 
 
 def mrf_denoise(
@@ -60,12 +81,52 @@ def mrf_denoise(
     Returns:
         Restored image with the same shape as `y`.
     """
-    raise NotImplementedError("mrf_denoise is not implemented")
+    x = y.astype(np.float32).copy()
+
+    for _ in range(num_iters):
+        grad = 2.0 * (x - y)
+
+        dx = x[:, :-1] - x[:, 1:]
+        if penalty == "quadratic":
+            deriv = 2.0 * dx
+        else:
+            adx = np.abs(dx)
+            small = adx <= huber_delta
+            deriv = np.empty_like(dx)
+            deriv[small] = 2.0 * dx[small]
+            deriv[~small] = 2.0 * huber_delta * np.sign(dx[~small])
+
+        grad[:, :-1] += lambda_smooth * deriv
+        grad[:, 1:] += -lambda_smooth * deriv
+
+        dy = x[:-1, :] - x[1:, :]
+        if penalty == "quadratic":
+            deriv_v = 2.0 * dy
+        else:
+            ady = np.abs(dy)
+            smallv = ady <= huber_delta
+            deriv_v = np.empty_like(dy)
+            deriv_v[smallv] = 2.0 * dy[smallv]
+            deriv_v[~smallv] = 2.0 * huber_delta * np.sign(dy[~smallv])
+
+        grad[:-1, :] += lambda_smooth * deriv_v
+        grad[1:, :] += -lambda_smooth * deriv_v
+
+        x = x - step * grad
+        x = np.clip(x, 0.0, 255.0)
+
+    return x
 
 
 def normalize_to_uint8(x: np.ndarray) -> np.ndarray:
     """Min-max normalize array to [0,255] uint8 for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = np.asarray(x, dtype=np.float32)
+    mn = float(np.min(arr))
+    mx = float(np.max(arr))
+    if mx <= mn:
+        return np.clip(arr, 0.0, 255.0).astype(np.uint8)
+    y = (arr - mn) * (255.0 / (mx - mn))
+    return np.clip(y.round(), 0, 255).astype(np.uint8)
 
 
 def main() -> int:
@@ -99,9 +160,11 @@ def main() -> int:
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    img = cv2.imread(str(imgs_dir / args.img), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    try:
+        pil_img = Image.open(imgs_dir / args.img)
+    except Exception:
         raise FileNotFoundError(str(imgs_dir / args.img))
+    img = np.asarray(pil_img.convert("L"))
 
     missing: list[str] = []
 
