@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
 import cv2
 import numpy as np
 
@@ -26,7 +27,27 @@ def optical_flow_farneback(prev_gray: np.ndarray, next_gray: np.ndarray, **param
     Returns:
         Dense flow field `(H, W, 2)` as float array.
     """
-    raise NotImplementedError("optical_flow_farneback is not implemented")
+    pyr_scale = params.get("pyr_scale", 0.5)
+    levels = params.get("levels", 3)
+    winsize = params.get("winsize", 15)
+    iterations = params.get("iterations", 3)
+    poly_n = params.get("poly_n", 5)
+    poly_sigma = params.get("poly_sigma", 1.2)
+    flags = params.get("flags", 0)
+
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_gray.astype(np.uint8),
+        next_gray.astype(np.uint8),
+        None,
+        pyr_scale,
+        levels,
+        winsize,
+        iterations,
+        poly_n,
+        poly_sigma,
+        flags,
+    )
+    return flow
 
 
 def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
@@ -39,7 +60,24 @@ def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
     Returns:
         `uint8` BGR image `(H,W,3)` suitable for `cv2.imwrite`.
     """
-    raise NotImplementedError("flow_to_hsv is not implemented")
+    h, w = flow_xy.shape[:2]
+    fx = flow_xy[..., 0]
+    fy = flow_xy[..., 1]
+
+    rad = np.sqrt(fx * fx + fy * fy)
+    ang = np.arctan2(fy, fx) + np.pi
+
+    max_rad = np.max(rad)
+    if max_rad > 0:
+        rad = rad / max_rad
+
+    hsv = np.zeros((h, w, 3), dtype=np.uint8)
+    hsv[..., 0] = (ang * 180.0 / np.pi).astype(np.uint8)
+    hsv[..., 1] = 255
+    hsv[..., 2] = (rad * 255).astype(np.uint8)
+
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return bgr
 
 
 def main() -> int:
@@ -68,9 +106,11 @@ def main() -> int:
     out_dir = (repo_root / args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    img = cv2.imread(str(imgs_dir / args.img), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    try:
+        pil_img = Image.open(imgs_dir / args.img)
+    except Exception:
         raise FileNotFoundError(str(imgs_dir / args.img))
+    img = np.asarray(pil_img.convert("L"))
 
     missing: list[str] = []
 
@@ -83,9 +123,12 @@ def main() -> int:
         flow = optical_flow_farneback(prev, nxt)
         vis = flow_to_hsv(flow)
 
-        cv2.imwrite(str(out_dir / "prev.png"), prev)
-        cv2.imwrite(str(out_dir / "next.png"), nxt)
-        cv2.imwrite(str(out_dir / "flow_vis.png"), vis)
+        Image.fromarray(prev.astype(np.uint8)).convert("L").save(out_dir / "prev.png")
+        Image.fromarray(nxt.astype(np.uint8)).convert("L").save(out_dir / "next.png")
+        if vis.ndim == 3 and vis.shape[2] == 3:
+            Image.fromarray(vis[..., ::-1].astype(np.uint8)).convert("RGB").save(out_dir / "flow_vis.png")
+        else:
+            Image.fromarray(vis.astype(np.uint8)).save(out_dir / "flow_vis.png")
     except NotImplementedError as exc:
         missing.append(str(exc))
 
